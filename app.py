@@ -11,6 +11,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import json
 from bson import json_util
 import tempfile
+from utils.image import pre_processing, text_extraction, translate_indictrans, detect_language
+
 # Import PDFTranslationSystem but handle potential import errors
 try:
     from utils.pdftry import PDFTranslationSystem
@@ -147,6 +149,7 @@ def allowed_file(filename):
 @app.route('/process_image', methods=['POST'])
 def process_image():
     try:
+        from utils.image import pre_processing, text_extraction, translate_indictrans, detect_language  # Import from image.py
         target_language = request.form.get('language', 'en')
         original_text = ""
 
@@ -168,33 +171,25 @@ def process_image():
                         
                         if PDF_TRANSLATOR_AVAILABLE:
                             try:
-                                # Initialize the system with the target language
                                 pdf_translator = PDFTranslationSystem(target_language=target_language, tesseract_cmd=tesseract_path)
-                                
-                                # Extract and translate the PDF
                                 result = pdf_translator.translate_pdf(file_path)
                                 original_text = result["original_text"]
                                 translated_text = result["translated_text"]
                                 pdf_translation_successful = True
-                                
-                                # Return early since we already have the translation
                                 return jsonify({
                                     "original_text": original_text,
                                     "translated_text": translated_text
                                 })
                             except Exception as pdf_error:
                                 print(f"PDF translation system error: {pdf_error}")
-                                # Fall back to basic extraction
                         
-                        # If PDFTranslationSystem failed or isn't available, use fallback method
                         if not pdf_translation_successful:
                             original_text = extract_text_from_pdf_fallback(file_path)
                     else:
-                        # Process image file using pytesseract
-                        img = Image.open(file_path)
-                        original_text = pytesseract.image_to_string(img)
+                        # Use advanced image preprocessing and extraction from image.py
+                        processed_image = pre_processing(file_path)
+                        original_text = text_extraction(processed_image)
                 finally:
-                    # Always clean up the temp file
                     if os.path.exists(file_path):
                         os.remove(file_path)
             else:
@@ -205,12 +200,11 @@ def process_image():
         else:
             return jsonify({"error": "No image or text provided"}), 400
         
-        # Translate the text if we have content (for non-PDF content or fallback)
+        # Translate the text if we have content
         if original_text.strip():
             try:
-                # Use googletrans for translation
-                translation = translator.translate(original_text, dest=target_language)
-                translated_text = translation.text
+                src_lang = detect_language(original_text)
+                translated_text = translate_indictrans(original_text, src_lang, target_language)
             except Exception as trans_error:
                 print(f"Translation error: {trans_error}")
                 translated_text = "Translation service unavailable"
@@ -225,6 +219,8 @@ def process_image():
     except Exception as e:
         print(f"Error in process_image: {e}")
         return jsonify({"error": "An error occurred while processing your request"}), 500
+    
+
 
 if __name__ == '__main__':
     # For production, use a proper WSGI server instead of the built-in Flask server
